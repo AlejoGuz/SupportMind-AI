@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  --bg-deep: #06101f;
+  --bg-mid: #0b1c33;
+  --accent: #2dd4bf;
+  --accent-2: #38bdf8;
+  --glow: rgba(45, 212, 191, 0.35);
+  --text: #e8f1ff;
+  --muted: #93a4bd;
+  --panel: rgba(12, 28, 48, 0.82);
+  --border: rgba(125, 211, 252, 0.18);
+  font-family: "Sora", "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg-deep);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(56, 189, 248, 0.22), transparent 55%),
+    radial-gradient(900px 500px at 90% 10%, rgba(45, 212, 191, 0.18), transparent 50%),
+    linear-gradient(160deg, #040b16 0%, #0a1730 45%, #07101f 100%);
+  color: var(--text);
+}
+
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--glow);
+  }
+  70% {
+    box-shadow: 0 0 0 18px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-float {
+  animation: floaty 4.5s ease-in-out infinite;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.45s ease-out both;
+}
