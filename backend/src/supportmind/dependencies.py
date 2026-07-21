@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from supportmind.application.use_cases.alerting import AcceptAlertRequest, RejectAlertRequest, ResolveIncident
+from supportmind.application.use_cases.alerting import (
+    AcceptAlertRequest,
+    CreateManualIncident,
+    GetAlertDetail,
+    RejectAlertRequest,
+    ResolveIncident,
+)
 from supportmind.application.use_cases.auth import LoginAgent
 from supportmind.application.use_cases.chat import AnswerChatStep, GetCurrentNode, StartChatSession
 from supportmind.application.use_cases.ticketing import EscalateToTicket
@@ -141,3 +147,11 @@ def reject_alert_uc(c: Container = Depends(get_container)) -> RejectAlertRequest
 
 def resolve_incident_uc(c: Container = Depends(get_container)) -> ResolveIncident:
     return ResolveIncident(c.incidents, c.audit)
+
+
+def alert_detail_uc(c: Container = Depends(get_container)) -> GetAlertDetail:
+    return GetAlertDetail(c.alerts, c.tickets)
+
+
+def manual_incident_uc(c: Container = Depends(get_container)) -> CreateManualIncident:
+    return CreateManualIncident(c.incidents, c.tickets, c.audit)

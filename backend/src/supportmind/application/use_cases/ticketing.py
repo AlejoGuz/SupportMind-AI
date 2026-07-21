@@ -95,8 +95,6 @@ class EscalateToTicket:
         session = await self._conversations.get_by_id(data.session_id)
         if not session:
             raise DomainError("SESSION_NOT_FOUND", "Chat session not found")
-        if session.outcome == ConversationOutcome.BLOCKED_BY_INCIDENT:
-            raise DomainError("BLOCKED_BY_INCIDENT", "Active incident already covers this issue")
         if session.outcome == ConversationOutcome.ESCALATED:
             raise DomainError("ALREADY_ESCALATED", "Session already created a ticket")
 
@@ -116,14 +114,7 @@ class EscalateToTicket:
         ).value
 
         active = await self._incidents.get_active_by_fingerprint(fingerprint)
-        if active:
-            session.complete(ConversationOutcome.BLOCKED_BY_INCIDENT)
-            await self._conversations.save(session)
-            raise DomainError(
-                "BLOCKED_BY_INCIDENT",
-                f"Ya existe un incidente conocido ({active.number}). No se generará un ticket duplicado.",
-                {"incident_number": active.number},
-            )
+        link_to_incident = active  # si hay incidente activo, el ticket será hijo
 
         transcript = [
             {
@@ -156,7 +147,7 @@ class EscalateToTicket:
         seq = await self._tickets.next_sequence()
         number = TicketNumber.generate(utcnow().year, seq).value
 
-        l1 = self._assignment.choose(await self._agents.list_available_l1())
+        l1 = None if link_to_incident else self._assignment.choose(await self._agents.list_available_l1())
         attachments = []
         for att in data.attachment_keys or []:
             attachments.append(
@@ -169,9 +160,14 @@ class EscalateToTicket:
                 )
             )
 
+        create_msg = (
+            f"Ticket hijo asociado automáticamente al incidente padre {link_to_incident.number}"
+            if link_to_incident
+            else "Ticket creado automáticamente por CELU"
+        )
         ticket = Ticket(
             number=number,
-            status=TicketStatus.NEW,
+            status=TicketStatus.ON_HOLD if link_to_incident else TicketStatus.NEW,
             priority=priority,
             category=category,
             sentiment=sentiment,
@@ -187,15 +183,24 @@ class EscalateToTicket:
             created_by="CELU_BOT",
             problem_fingerprint=fingerprint,
             conversation_session_id=session.id,
+            incident_id=link_to_incident.id if link_to_incident else None,
             attachments=attachments,
             conversation_transcript=transcript,
             events=[
                 TicketEvent(
                     id=uuid4(),
-                    event_type="created",
-                    message="Ticket creado automáticamente por CELU",
+                    event_type="linked_to_incident" if link_to_incident else "created",
+                    message=create_msg,
                     actor="CELU_BOT",
-                    payload={"fingerprint": fingerprint, "provider": enrichment.provider},
+                    payload={
+                        "fingerprint": fingerprint,
+                        "provider": enrichment.provider,
+                        **(
+                            {"incident_id": str(link_to_incident.id), "incident_number": link_to_incident.number}
+                            if link_to_incident
+                            else {}
+                        ),
+                    },
                 )
             ],
         )
@@ -216,8 +221,12 @@ class EscalateToTicket:
         if l1:
             await self._agents.increment_open_count(l1.id)
 
+        if link_to_incident:
+            link_to_incident.add_ticket(ticket.id)
+            await self._incidents.save(link_to_incident)
+
         policy = await self._sla.get_policy(priority)
-        if policy:
+        if policy and not link_to_incident:
             clock = TicketSlaClock.start(ticket.id, policy)
             await self._sla.save_clock(clock)
 
@@ -227,20 +236,30 @@ class EscalateToTicket:
 
         await self._audit.append(
             AuditEntry(
-                action="ticket.created",
+                action="ticket.linked_to_incident" if link_to_incident else "ticket.created",
                 actor="CELU_BOT",
                 resource_type="ticket",
                 resource_id=str(ticket.id),
-                details={"number": ticket.number, "fingerprint": fingerprint},
+                details={
+                    "number": ticket.number,
+                    "fingerprint": fingerprint,
+                    **(
+                        {"incident_number": link_to_incident.number}
+                        if link_to_incident
+                        else {}
+                    ),
+                },
             )
         )
 
-        settings = get_settings()
-        count = await self._correlation.record_and_count(
-            fingerprint, ticket.id, settings.correlation_window_seconds
-        )
-        if self._corr_policy.should_request_alert(count):
-            await self._maybe_create_alert_request(fingerprint, current.code, count)
+        # Solo correlacionar si NO hay incidente activo (para no spamear alertas)
+        if not link_to_incident:
+            settings = get_settings()
+            count = await self._correlation.record_and_count(
+                fingerprint, ticket.id, settings.correlation_window_seconds
+            )
+            if self._corr_policy.should_request_alert(count):
+                await self._maybe_create_alert_request(fingerprint, current.code, count)
 
         return ticket
 

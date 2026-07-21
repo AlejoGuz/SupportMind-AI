@@ -111,10 +111,11 @@ class AnswerChatStep:
             fingerprint_preview = await self._preview_fingerprint(session, next_node)
             active = await self._incidents.get_active_by_fingerprint(fingerprint_preview)
             if active:
-                session.complete(ConversationOutcome.BLOCKED_BY_INCIDENT)
+                # Aviso informativo: el ticket se asociará al incidente padre (no bloquea el formulario)
                 blocked_message = (
-                    f"Ya existe un incidente conocido para este inconveniente "
-                    f"({active.number}). Nuestro equipo se encuentra trabajando para solucionarlo."
+                    f"Ya existe un incidente conocido ({active.number}). "
+                    "Si continuás, tu reporte se asociará al ticket padre del incidente "
+                    "y no aparecerá como ticket suelto en la cola principal."
                 )
 
         session = await self._conversations.save(session)
@@ -160,16 +161,20 @@ def _to_view(
     node: DecisionNode,
     blocked_message: str | None = None,
 ) -> CurrentNodeView:
+    # En escalate con incidente activo aún mostramos el formulario (solo aviso)
+    hide_options = session.outcome is not None and session.outcome != ConversationOutcome.BLOCKED_BY_INCIDENT
+    if session.outcome == ConversationOutcome.RESOLVED:
+        hide_options = True
     return CurrentNodeView(
         session_id=session.id,
         public_token=session.public_token,
         node_id=node.id,
         node_code=node.code,
-        prompt=node.prompt if not blocked_message else blocked_message,
+        prompt=node.prompt,
         node_type=node.node_type,
         options=(
             []
-            if blocked_message or session.outcome is not None
+            if hide_options
             else [
                 {"id": str(o.id), "label": o.label, "sort_order": o.sort_order}
                 for o in sorted(node.options, key=lambda x: x.sort_order)

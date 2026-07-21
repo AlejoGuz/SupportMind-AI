@@ -15,11 +15,14 @@ from supportmind.infrastructure.db.models import Base
 async def seed() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.exec_driver_sql(
+            "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS escalation_level VARCHAR(16) DEFAULT 'l2'"
+        )
 
     async with SessionLocal() as session:
         existing = await session.execute(select(m.AgentModel).limit(1))
         if existing.scalar_one_or_none():
-            print("Database already seeded")
+            print("Database already seeded (schema ensured)")
             return
 
         admin = m.AgentModel(

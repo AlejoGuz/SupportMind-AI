@@ -1,5 +1,28 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+function formatApiError(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object") return fallback;
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const d = detail as { message?: string; code?: string };
+    if (d.message) return d.message;
+  }
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (!item || typeof item !== "object") return String(item);
+        const loc = Array.isArray((item as { loc?: unknown }).loc)
+          ? (item as { loc: unknown[] }).loc.filter((x) => x !== "body").join(".")
+          : "";
+        const msg = (item as { msg?: string }).msg ?? "dato inválido";
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .join(" · ");
+  }
+  return fallback;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -10,7 +33,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.detail?.message || body?.detail || res.statusText);
+    throw new Error(formatApiError(body, res.statusText));
   }
   return res.json();
 }

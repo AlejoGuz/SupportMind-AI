@@ -1,5 +1,17 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+export class AuthError extends Error {
+  constructor(message = "Sesión expirada") {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+function clearSession() {
+  localStorage.removeItem("sm_access_token");
+  localStorage.removeItem("sm_refresh_token");
+}
+
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem("sm_access_token");
   return {
@@ -16,6 +28,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+
+  if (res.status === 401) {
+    const isLoginCall = path.includes("/auth/login");
+    if (!isLoginCall) {
+      clearSession();
+      if (!window.location.pathname.includes("/login")) {
+        window.location.assign("/login");
+      }
+      throw new AuthError("Sesión expirada. Volvé a iniciar sesión.");
+    }
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(
@@ -59,6 +83,30 @@ export type Alert = {
   status: string;
   public_title: string;
   created_at: string;
+  ticket_ids?: string[];
+};
+
+export type AlertDetail = {
+  id: string;
+  fingerprint: string;
+  problem_code: string;
+  ticket_count: number;
+  window_seconds: number;
+  status: string;
+  public_title: string;
+  created_at: string;
+  reason: string;
+  tickets: {
+    id: string;
+    number: string;
+    status: string;
+    priority: string;
+    customer_name: string;
+    customer_email: string;
+    summary_ai: string;
+    description: string;
+    created_at: string;
+  }[];
 };
 
 export type Incident = {
@@ -70,6 +118,11 @@ export type Incident = {
   public_message: string;
   ticket_ids: string[];
   created_at: string;
+  fingerprint?: string;
+  escalation_level?: string;
+  is_parent?: boolean;
+  child_tickets?: Ticket[];
+  resolved_at?: string | null;
 };
 
 export type Metrics = {
@@ -103,14 +156,30 @@ export const api = {
       body: JSON.stringify({ message }),
     }),
   alerts: () => request<Alert[]>("/api/v1/alerts"),
-  acceptAlert: (id: string) =>
-    request<Incident>(`/api/v1/alerts/${id}/accept`, { method: "POST" }),
+  alertDetail: (id: string) => request<AlertDetail>(`/api/v1/alerts/${id}/detail`),
+  acceptAlert: (id: string, escalation_level = "l2") =>
+    request<Incident>(`/api/v1/alerts/${id}/accept`, {
+      method: "POST",
+      body: JSON.stringify({ escalation_level }),
+    }),
   rejectAlert: (id: string, reason: string) =>
     request(`/api/v1/alerts/${id}/reject`, {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+  createManualIncident: (payload: {
+    title: string;
+    problem_code: string;
+    public_message?: string;
+    fingerprint?: string;
+    escalation_level?: string;
+  }) =>
+    request<Incident>("/api/v1/alerts/manual", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   incidents: () => request<Incident[]>("/api/v1/incidents"),
+  incident: (id: string) => request<Incident>(`/api/v1/incidents/${id}`),
   resolveIncident: (id: string) =>
     request(`/api/v1/incidents/${id}/resolve`, { method: "POST" }),
   metrics: () => request<Metrics>("/api/v1/metrics/overview"),

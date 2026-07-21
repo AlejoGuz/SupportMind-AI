@@ -397,13 +397,26 @@ class SqlAlchemyTicketRepository:
         assignee_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
+        exclude_incident_children: bool = True,
     ) -> list[Ticket]:
         stmt = select(m.TicketModel).order_by(m.TicketModel.created_at.desc()).limit(limit).offset(offset)
+        if exclude_incident_children:
+            stmt = stmt.where(m.TicketModel.incident_id.is_(None))
         if status:
             stmt = stmt.where(m.TicketModel.status == status)
         if assignee_id:
             stmt = stmt.where(m.TicketModel.assignee_id == assignee_id)
         result = await self._session.execute(stmt)
+        return [self._to_entity(r) for r in result.scalars().all()]
+
+    async def list_by_ids(self, ticket_ids: list[UUID]) -> list[Ticket]:
+        if not ticket_ids:
+            return []
+        result = await self._session.execute(
+            select(m.TicketModel)
+            .where(m.TicketModel.id.in_(ticket_ids))
+            .order_by(m.TicketModel.created_at.asc())
+        )
         return [self._to_entity(r) for r in result.scalars().all()]
 
     async def list_by_fingerprint_since(self, fingerprint: str, since_iso_window_seconds: int) -> list[Ticket]:
@@ -413,6 +426,14 @@ class SqlAlchemyTicketRepository:
                 m.TicketModel.problem_fingerprint == fingerprint,
                 m.TicketModel.created_at >= since,
             )
+        )
+        return [self._to_entity(r) for r in result.scalars().all()]
+
+    async def list_by_fingerprint(self, fingerprint: str) -> list[Ticket]:
+        result = await self._session.execute(
+            select(m.TicketModel)
+            .where(m.TicketModel.problem_fingerprint == fingerprint)
+            .order_by(m.TicketModel.created_at.asc())
         )
         return [self._to_entity(r) for r in result.scalars().all()]
 
@@ -604,6 +625,8 @@ class SqlAlchemyIncidentRepository:
             created_by=row.created_by,
             ticket_ids=[UUID(t) if isinstance(t, str) else t for t in (row.ticket_ids or [])],
             resolved_at=row.resolved_at,
+            escalation_level=getattr(row, "escalation_level", None) or "l2",
+            is_parent=True,
         )
 
     async def save(self, incident: Incident) -> Incident:
@@ -621,6 +644,8 @@ class SqlAlchemyIncidentRepository:
         row.created_by = incident.created_by
         row.ticket_ids = [str(t) for t in incident.ticket_ids]
         row.resolved_at = incident.resolved_at
+        if hasattr(row, "escalation_level"):
+            row.escalation_level = incident.escalation_level
         await self._session.flush()
         return incident
 

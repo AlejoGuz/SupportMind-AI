@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-CELU can detect correlated tickets quickly (3 in 20s). Auto-creating incidents risks false positives.
+CELU can detect correlated tickets quickly (3 in 60s). Auto-creating incidents risks false positives.
 
 ## Decision
 

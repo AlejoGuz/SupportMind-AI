@@ -19,7 +19,7 @@ Guided Decision Engine with multiple-choice only. Outcomes: resolved | escalated
 
 ## Correlation
 
-Fingerprint = hash(product_family + leaf_code + path). Redis window 20s / threshold 3 → AlertRequest (human gate) → Incident.
+Fingerprint = hash(product_family + leaf_code + path). Redis window 60s / threshold 3 → AlertRequest (human gate) → Incident.
 
 ## AI
 

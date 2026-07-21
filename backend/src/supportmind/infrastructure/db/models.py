@@ -213,6 +213,7 @@ class IncidentModel(Base, TimestampMixin):
     created_by: Mapped[Any] = mapped_column(PGUUID(as_uuid=True))
     ticket_ids: Mapped[list] = mapped_column(JSON, default=list)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    escalation_level: Mapped[str] = mapped_column(String(16), default="l2")
 
 
 class AuditLogModel(Base, TimestampMixin):

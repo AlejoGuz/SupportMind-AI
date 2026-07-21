@@ -58,13 +58,13 @@ class CurrentNodeResponse(BaseModel):
 
 
 class EscalateRequest(BaseModel):
-    first_name: str
-    last_name: str
-    email: EmailStr
-    phone: str
-    order_number: str
+    first_name: str = Field(min_length=1)
+    last_name: str = Field(min_length=1)
+    email: str = Field(min_length=3, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    phone: str = Field(min_length=1)
+    order_number: str = Field(min_length=1)
     product_id: UUID
-    description: str = Field(min_length=5)
+    description: str = Field(min_length=3)
     attachment_keys: Optional[List[Dict[str, Any]]] = None
 
 
@@ -120,6 +120,44 @@ class RejectAlertRequest(BaseModel):
     reason: str = Field(min_length=3)
 
 
+class AcceptAlertBody(BaseModel):
+    escalation_level: str = "l2"
+
+
+class ManualIncidentRequest(BaseModel):
+    title: str = Field(min_length=3)
+    problem_code: str = Field(min_length=2)
+    public_message: str = ""
+    fingerprint: Optional[str] = None
+    escalation_level: str = "l2"
+    link_existing_fingerprint: bool = True
+
+
+class AlertTicketDetailOut(BaseModel):
+    id: UUID
+    number: str
+    status: str
+    priority: str
+    customer_name: str
+    customer_email: str
+    summary_ai: str
+    description: str
+    created_at: datetime
+
+
+class AlertDetailOut(BaseModel):
+    id: UUID
+    fingerprint: str
+    problem_code: str
+    ticket_count: int
+    window_seconds: int
+    status: str
+    public_title: str
+    created_at: datetime
+    reason: str
+    tickets: List[AlertTicketDetailOut]
+
+
 class IncidentOut(BaseModel):
     id: UUID
     number: str
@@ -131,6 +169,9 @@ class IncidentOut(BaseModel):
     ticket_ids: List[UUID]
     created_at: datetime
     resolved_at: Optional[datetime]
+    escalation_level: str = "l2"
+    is_parent: bool = True
+    child_tickets: Optional[List[TicketOut]] = None
 
 
 class AgentOut(BaseModel):

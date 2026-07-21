@@ -59,6 +59,8 @@ class Incident:
     created_by: UUID
     ticket_ids: list = field(default_factory=list)
     resolved_at: Optional[datetime] = None
+    escalation_level: str = "l2"
+    is_parent: bool = True
     id: UUID = field(default_factory=entity_id)
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)

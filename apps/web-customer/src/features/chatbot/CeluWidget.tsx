@@ -75,13 +75,16 @@ export function CeluWidget({ open, onClose, products }: Props) {
         ...form,
         product_id: productId || products[0]?.id,
         description: form.description || `Soporte para ${productName}`,
-      })) as { number: string };
+      })) as { number: string; incident_id?: string | null };
       setTicketNumber(ticket.number);
+      const linked = ticket.incident_id
+        ? ` Tu reporte quedó asociado al incidente padre y no aparecerá suelto en la cola principal.`
+        : " Un agente de Nivel 1 te contactará pronto.";
       setMessages((m) => [
         ...m,
         {
           role: "celu",
-          text: `Ticket ${ticket.number} creado. Un agente de Nivel 1 te contactará pronto.`,
+          text: `Ticket ${ticket.number} creado.${linked}`,
         },
       ]);
     } catch (err) {
@@ -133,6 +136,12 @@ export function CeluWidget({ open, onClose, products }: Props) {
           </div>
         )}
 
+        {node?.blocked_message && (
+          <div className="rounded-xl border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+            {node.blocked_message}
+          </div>
+        )}
+
         {messages.map((msg, idx) => (
           <div
             key={`${msg.role}-${idx}`}
@@ -172,17 +181,19 @@ export function CeluWidget({ open, onClose, products }: Props) {
             <p className="text-sm text-[var(--muted)]">Completá tus datos para abrir el ticket</p>
             {(
               [
-                ["first_name", "Nombre"],
-                ["last_name", "Apellido"],
-                ["email", "Correo"],
-                ["phone", "Teléfono"],
-                ["order_number", "Nº de pedido"],
-                ["description", "Descripción del problema"],
+                ["first_name", "Nombre", "text"],
+                ["last_name", "Apellido", "text"],
+                ["email", "Correo (ej: vos@email.com)", "email"],
+                ["phone", "Teléfono", "tel"],
+                ["order_number", "Nº de pedido", "text"],
+                ["description", "Descripción del problema (mín. 3 caracteres)", "text"],
               ] as const
-            ).map(([key, label]) => (
+            ).map(([key, label, type]) => (
               <input
                 key={key}
                 required
+                type={type}
+                minLength={key === "description" ? 3 : 1}
                 placeholder={label}
                 className="w-full rounded-lg border border-[var(--border)] bg-[#0a1628] px-3 py-2 text-sm"
                 value={form[key]}

@@ -4,14 +4,22 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from supportmind.application.use_cases.alerting import AcceptAlertRequest, RejectAlertRequest, ResolveIncident
+from supportmind.application.use_cases.alerting import (
+    AcceptAlertRequest,
+    CreateManualIncident,
+    GetAlertDetail,
+    RejectAlertRequest,
+    ResolveIncident,
+)
 from supportmind.application.use_cases.auth import LoginAgent
 from supportmind.dependencies import (
     Container,
     accept_alert_uc,
+    alert_detail_uc,
     get_container,
     get_current_agent_id,
     login_uc,
+    manual_incident_uc,
     reject_alert_uc,
     resolve_incident_uc,
 )
@@ -21,12 +29,16 @@ from supportmind.domain.ticketing.entities import TicketEvent
 from supportmind.infrastructure.auth.security import refresh_access_token
 from supportmind.presentation.api.v1.public import _domain_http, _ticket_out
 from supportmind.presentation.schemas.api import (
+    AcceptAlertBody,
     AgentOut,
+    AlertDetailOut,
     AlertOut,
+    AlertTicketDetailOut,
     AuditOut,
     CommentRequest,
     IncidentOut,
     LoginRequest,
+    ManualIncidentRequest,
     MetricsOverview,
     RefreshRequest,
     RejectAlertRequest as RejectBody,
@@ -198,26 +210,95 @@ async def list_alerts(
     ]
 
 
+@router.post("/alerts/manual", response_model=IncidentOut)
+async def create_manual_incident(
+    body: ManualIncidentRequest,
+    agent_id: str = Depends(get_current_agent_id),
+    uc: CreateManualIncident = Depends(manual_incident_uc),
+):
+    try:
+        incident = await uc.execute(
+            agent_id=UUID(agent_id),
+            title=body.title,
+            problem_code=body.problem_code,
+            public_message=body.public_message,
+            fingerprint=body.fingerprint,
+            escalation_level=body.escalation_level,
+            link_existing_fingerprint=body.link_existing_fingerprint,
+        )
+        return _incident_out(incident)
+    except DomainError as exc:
+        raise _domain_http(exc) from exc
+
+
+@router.get("/alerts/{alert_id}/detail", response_model=AlertDetailOut)
+async def alert_detail(
+    alert_id: UUID,
+    _: str = Depends(get_current_agent_id),
+    uc: GetAlertDetail = Depends(alert_detail_uc),
+):
+    try:
+        view = await uc.execute(alert_id=alert_id)
+        return AlertDetailOut(
+            id=view.id,
+            fingerprint=view.fingerprint,
+            problem_code=view.problem_code,
+            ticket_count=view.ticket_count,
+            window_seconds=view.window_seconds,
+            status=view.status,
+            public_title=view.public_title,
+            created_at=view.created_at,
+            reason=view.reason,
+            tickets=[
+                AlertTicketDetailOut(
+                    id=t.id,
+                    number=t.number,
+                    status=t.status,
+                    priority=t.priority,
+                    customer_name=t.customer_name,
+                    customer_email=t.customer_email,
+                    summary_ai=t.summary_ai,
+                    description=t.description,
+                    created_at=t.created_at,
+                )
+                for t in view.tickets
+            ],
+        )
+    except DomainError as exc:
+        raise _domain_http(exc) from exc
+
+
+def _incident_out(incident, child_tickets=None) -> IncidentOut:
+    return IncidentOut(
+        id=incident.id,
+        number=incident.number,
+        title=incident.title,
+        fingerprint=incident.fingerprint,
+        problem_code=incident.problem_code,
+        status=incident.status.value,
+        public_message=incident.public_message,
+        ticket_ids=incident.ticket_ids,
+        created_at=incident.created_at,
+        resolved_at=incident.resolved_at,
+        escalation_level=getattr(incident, "escalation_level", "l2") or "l2",
+        is_parent=True,
+        child_tickets=child_tickets,
+    )
+
+
 @router.post("/alerts/{alert_id}/accept", response_model=IncidentOut)
 async def accept_alert(
     alert_id: UUID,
+    body: AcceptAlertBody = AcceptAlertBody(),
     agent_id: str = Depends(get_current_agent_id),
     uc: AcceptAlertRequest = Depends(accept_alert_uc),
 ):
     try:
-        incident = await uc.execute(alert_id=alert_id, agent_id=UUID(agent_id))
-        return IncidentOut(
-            id=incident.id,
-            number=incident.number,
-            title=incident.title,
-            fingerprint=incident.fingerprint,
-            problem_code=incident.problem_code,
-            status=incident.status.value,
-            public_message=incident.public_message,
-            ticket_ids=incident.ticket_ids,
-            created_at=incident.created_at,
-            resolved_at=incident.resolved_at,
+        level = body.escalation_level or "l2"
+        incident = await uc.execute(
+            alert_id=alert_id, agent_id=UUID(agent_id), escalation_level=level
         )
+        return _incident_out(incident)
     except DomainError as exc:
         raise _domain_http(exc) from exc
 
@@ -249,21 +330,7 @@ async def list_incidents(
     c: Container = Depends(get_container),
 ):
     incidents = await c.incidents.list_incidents(status=status)
-    return [
-        IncidentOut(
-            id=i.id,
-            number=i.number,
-            title=i.title,
-            fingerprint=i.fingerprint,
-            problem_code=i.problem_code,
-            status=i.status.value,
-            public_message=i.public_message,
-            ticket_ids=i.ticket_ids,
-            created_at=i.created_at,
-            resolved_at=i.resolved_at,
-        )
-        for i in incidents
-    ]
+    return [_incident_out(i) for i in incidents]
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentOut)
@@ -275,18 +342,12 @@ async def get_incident(
     incident = await c.incidents.get_by_id(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    return IncidentOut(
-        id=incident.id,
-        number=incident.number,
-        title=incident.title,
-        fingerprint=incident.fingerprint,
-        problem_code=incident.problem_code,
-        status=incident.status.value,
-        public_message=incident.public_message,
-        ticket_ids=incident.ticket_ids,
-        created_at=incident.created_at,
-        resolved_at=incident.resolved_at,
-    )
+    children = await c.tickets.list_by_ids(incident.ticket_ids)
+    child_out = []
+    for t in children:
+        clock = await c.sla.get_clock(t.id)
+        child_out.append(_ticket_out(t, clock.remaining_seconds() if clock else None))
+    return _incident_out(incident, child_tickets=child_out)
 
 
 @router.post("/incidents/{incident_id}/resolve", response_model=IncidentOut)
@@ -297,18 +358,7 @@ async def resolve_incident(
 ):
     try:
         incident = await uc.execute(incident_id=incident_id, agent_id=UUID(agent_id))
-        return IncidentOut(
-            id=incident.id,
-            number=incident.number,
-            title=incident.title,
-            fingerprint=incident.fingerprint,
-            problem_code=incident.problem_code,
-            status=incident.status.value,
-            public_message=incident.public_message,
-            ticket_ids=incident.ticket_ids,
-            created_at=incident.created_at,
-            resolved_at=incident.resolved_at,
-        )
+        return _incident_out(incident)
     except DomainError as exc:
         raise _domain_http(exc) from exc
 

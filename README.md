@@ -44,4 +44,4 @@ uvicorn supportmind.main:app --reload
 
 See [docs/architecture.md](docs/architecture.md) and ADRs under `docs/adr/`.
 
-CELU uses multiple-choice decision trees only (no free text). Escalation creates tickets automatically, correlates fingerprints in a 20s window, and opens human-approved Alert Requests before creating parent Incidents.
+CELU uses multiple-choice decision trees only (no free text). Escalation creates tickets automatically, correlates fingerprints in a 60s window, and opens human-approved Alert Requests before creating parent Incidents.

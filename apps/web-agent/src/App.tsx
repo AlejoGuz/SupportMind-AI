@@ -10,11 +10,21 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api } from "./lib/api";
+import { api, AuthError } from "./lib/api";
 import { useAuthStore } from "./store/auth";
 import "./index.css";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        if (error instanceof AuthError) return false;
+        return failureCount < 1;
+      },
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const nav = [
   ["/", "Dashboard"],
@@ -333,25 +343,141 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function AlertsPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, refetchInterval: 5000 });
   const [reason, setReason] = useState("No corresponde a un incidente sistémico");
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [level, setLevel] = useState("l2");
+  const [showManual, setShowManual] = useState(false);
+  const [manual, setManual] = useState({
+    title: "",
+    problem_code: "",
+    public_message: "",
+    fingerprint: "",
+    escalation_level: "l2",
+  });
+
+  const detail = useQuery({
+    queryKey: ["alert-detail", detailId],
+    queryFn: () => api.alertDetail(detailId!),
+    enabled: Boolean(detailId),
+  });
+
   const accept = useMutation({
-    mutationFn: (id: string) => api.acceptAlert(id),
-    onSuccess: () => {
+    mutationFn: (id: string) => api.acceptAlert(id, level),
+    onSuccess: (incident) => {
       void qc.invalidateQueries({ queryKey: ["alerts"] });
       void qc.invalidateQueries({ queryKey: ["incidents"] });
+      void qc.invalidateQueries({ queryKey: ["tickets"] });
+      navigate(`/incidents/${incident.id}`);
     },
   });
   const reject = useMutation({
     mutationFn: (id: string) => api.rejectAlert(id, reason),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["alerts"] }),
   });
+  const createManual = useMutation({
+    mutationFn: () =>
+      api.createManualIncident({
+        title: manual.title,
+        problem_code: manual.problem_code,
+        public_message: manual.public_message,
+        fingerprint: manual.fingerprint || undefined,
+        escalation_level: manual.escalation_level,
+      }),
+    onSuccess: (incident) => {
+      setShowManual(false);
+      void qc.invalidateQueries({ queryKey: ["incidents"] });
+      void qc.invalidateQueries({ queryKey: ["tickets"] });
+      navigate(`/incidents/${incident.id}`);
+    },
+  });
+
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">Alertas</h2>
-      <p className="text-sm text-slate-500">
-        CELU propone incidentes. Un agente debe aceptar o rechazar (siempre auditado).
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold">Alertas</h2>
+          <p className="text-sm text-slate-500">
+            CELU propone incidentes. El agente de turno decide y puede escalar a L2/L3.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowManual((v) => !v)}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
+        >
+          Crear alerta / incidente
+        </button>
+      </div>
+
+      {showManual && (
+        <form
+          className="space-y-3 rounded-2xl border border-[var(--line)] bg-white p-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            createManual.mutate();
+          }}
+        >
+          <h3 className="font-semibold">Crear alerta / incidente manual</h3>
+          <p className="text-sm text-slate-500">
+            Uso exclusivo del agente de turno para convocar equipos de Nivel 2 o 3.
+          </p>
+          <input
+            required
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Título del incidente"
+            value={manual.title}
+            onChange={(e) => setManual((m) => ({ ...m, title: e.target.value }))}
+          />
+          <input
+            required
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Código de problema (ej: no_power)"
+            value={manual.problem_code}
+            onChange={(e) => setManual((m) => ({ ...m, problem_code: e.target.value }))}
+          />
+          <textarea
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Mensaje público / motivo de convocatoria"
+            value={manual.public_message}
+            onChange={(e) => setManual((m) => ({ ...m, public_message: e.target.value }))}
+          />
+          <input
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Fingerprint opcional (para asociar tickets existentes)"
+            value={manual.fingerprint}
+            onChange={(e) => setManual((m) => ({ ...m, fingerprint: e.target.value }))}
+          />
+          <select
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            value={manual.escalation_level}
+            onChange={(e) => setManual((m) => ({ ...m, escalation_level: e.target.value }))}
+          >
+            <option value="l2">Escalar a Nivel 2</option>
+            <option value="l3">Escalar a Nivel 3</option>
+          </select>
+          <button type="submit" className="rounded-lg bg-teal-700 px-4 py-2 text-sm text-white">
+            Crear incidente padre
+          </button>
+          {createManual.isError && (
+            <p className="text-sm text-rose-600">{(createManual.error as Error).message}</p>
+          )}
+        </form>
+      )}
+
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-slate-500">Al aceptar, escalar a:</span>
+        <select
+          className="rounded-lg border border-slate-200 px-2 py-1"
+          value={level}
+          onChange={(e) => setLevel(e.target.value)}
+        >
+          <option value="l2">Nivel 2</option>
+          <option value="l3">Nivel 3</option>
+        </select>
+      </div>
+
       <div className="space-y-3">
         {(alerts.data ?? []).map((a) => (
           <div key={a.id} className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
@@ -363,10 +489,17 @@ function AlertsPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
+                onClick={() => setDetailId(detailId === a.id ? null : a.id)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm"
+              >
+                Detalle
+              </button>
+              <button
+                type="button"
                 onClick={() => accept.mutate(a.id)}
                 className="rounded-lg bg-teal-700 px-4 py-2 text-sm text-white"
               >
-                Aceptar
+                Aceptar / crear incidente
               </button>
               <input
                 className="min-w-[240px] flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm"
@@ -381,6 +514,35 @@ function AlertsPage() {
                 Rechazar
               </button>
             </div>
+
+            {detailId === a.id && detail.data && (
+              <div className="mt-4 space-y-3 rounded-xl border border-amber-200 bg-white p-4 text-sm">
+                <p className="font-medium text-slate-800">¿Por qué es necesaria esta alerta?</p>
+                <p className="text-slate-600">{detail.data.reason}</p>
+                <p className="text-xs text-slate-500">
+                  Fingerprint: {detail.data.fingerprint} · Detectada:{" "}
+                  {new Date(detail.data.created_at).toLocaleString()}
+                </p>
+                <p className="font-medium">Tickets que dispararon la correlación</p>
+                <div className="space-y-2">
+                  {detail.data.tickets.map((t) => (
+                    <div key={t.id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <p className="font-medium">
+                        {t.number} · {t.priority} · {t.status}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {t.customer_name} · {t.customer_email} ·{" "}
+                        {new Date(t.created_at).toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-slate-700">{t.summary_ai || t.description}</p>
+                    </div>
+                  ))}
+                  {!detail.data.tickets.length && (
+                    <p className="text-slate-500">Sin tickets asociados en el detalle.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ))}
         {!alerts.data?.length && (
@@ -395,35 +557,123 @@ function AlertsPage() {
 
 function IncidentsPage() {
   const qc = useQueryClient();
+  const { id } = useParams();
   const incidents = useQuery({ queryKey: ["incidents"], queryFn: api.incidents });
-  const resolve = useMutation({
-    mutationFn: (id: string) => api.resolveIncident(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["incidents"] }),
+  const selectedId = id ?? null;
+  const detail = useQuery({
+    queryKey: ["incident", selectedId],
+    queryFn: () => api.incident(selectedId!),
+    enabled: Boolean(selectedId),
   });
+  const resolve = useMutation({
+    mutationFn: (incidentId: string) => api.resolveIncident(incidentId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["incidents"] });
+      if (selectedId) void qc.invalidateQueries({ queryKey: ["incident", selectedId] });
+    },
+  });
+
+  if (selectedId) {
+    const i = detail.data;
+    if (!i) return <p>Cargando incidente…</p>;
+    return (
+      <div className="space-y-5">
+        <NavLink to="/incidents" className="text-sm text-teal-800 hover:underline">
+          ← Volver a incidentes
+        </NavLink>
+        <div className="rounded-2xl border border-teal-200 bg-teal-50 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">
+            Ticket padre incidente
+          </p>
+          <h2 className="text-2xl font-semibold text-teal-950">{i.number}</h2>
+          <p className="mt-1 font-medium">{i.title}</p>
+          <p className="mt-2 text-sm text-teal-900/80">{i.public_message}</p>
+          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+            <Row label="Estado" value={i.status} />
+            <Row label="Código" value={i.problem_code} />
+            <Row label="Escalamiento" value={(i.escalation_level ?? "l2").toUpperCase()} />
+            <Row label="Tickets hijos" value={String(i.ticket_ids?.length ?? 0)} />
+            <Row label="Creado" value={new Date(i.created_at).toLocaleString()} />
+            <Row label="Fingerprint" value={i.fingerprint ?? "—"} />
+          </div>
+          {i.status === "active" && (
+            <button
+              type="button"
+              onClick={() => resolve.mutate(i.id)}
+              className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
+            >
+              Resolver incidente
+            </button>
+          )}
+        </div>
+
+        <section className="space-y-3">
+          <h3 className="text-lg font-semibold">Tickets hijos asociados</h3>
+          <p className="text-sm text-slate-500">
+            Estos tickets no aparecen en la ticketera principal; viven bajo el incidente padre.
+          </p>
+          {(i.child_tickets ?? []).map((t) => (
+            <div key={t.id} className="rounded-2xl border border-[var(--line)] bg-white p-4 text-sm">
+              <p className="font-medium">
+                {t.number} · {t.priority} · {t.status}
+              </p>
+              <p className="text-xs text-slate-500">
+                {t.customer_first_name} {t.customer_last_name} · {t.customer_email} ·{" "}
+                {new Date(t.created_at).toLocaleString()}
+              </p>
+              <p className="mt-2 text-slate-700">{t.summary_ai}</p>
+              <p className="mt-1 text-slate-500">{t.description}</p>
+            </div>
+          ))}
+          {!i.child_tickets?.length && (
+            <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+              Todavía no hay tickets hijos asociados
+            </p>
+          )}
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-2xl font-semibold">Incidentes</h2>
+      <p className="text-sm text-slate-500">
+        Cada incidente es un ticket padre. Los reportes correlacionados viven como hijos.
+      </p>
       <div className="grid gap-3">
         {(incidents.data ?? []).map((i) => (
           <div key={i.id} className="rounded-2xl border border-[var(--line)] bg-white p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
+                  Ticket padre incidente
+                </p>
                 <p className="text-xs uppercase text-slate-500">{i.number}</p>
                 <h3 className="font-semibold">{i.title}</h3>
                 <p className="mt-1 text-sm text-slate-600">{i.public_message}</p>
                 <p className="mt-2 text-xs text-slate-500">
-                  {i.ticket_ids.length} tickets agrupados · {i.status}
+                  {i.ticket_ids.length} tickets hijos · {i.status} ·{" "}
+                  {(i.escalation_level ?? "l2").toUpperCase()}
                 </p>
               </div>
-              {i.status === "active" && (
-                <button
-                  type="button"
-                  onClick={() => resolve.mutate(i.id)}
-                  className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white"
+              <div className="flex gap-2">
+                <NavLink
+                  to={`/incidents/${i.id}`}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 >
-                  Resolver
-                </button>
-              )}
+                  Ver detalle
+                </NavLink>
+                {i.status === "active" && (
+                  <button
+                    type="button"
+                    onClick={() => resolve.mutate(i.id)}
+                    className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white"
+                  >
+                    Resolver
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -562,6 +812,7 @@ function Protected() {
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/incidents" element={<IncidentsPage />} />
+        <Route path="/incidents/:id" element={<IncidentsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/metrics" element={<MetricsPage />} />
         <Route path="/history" element={<HistoryPage />} />

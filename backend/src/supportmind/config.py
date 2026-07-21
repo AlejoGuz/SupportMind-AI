@@ -21,10 +21,10 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str = "change-me-in-production-supportmind-secret"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 7
 
-    correlation_window_seconds: int = 20
+    correlation_window_seconds: int = 60
     correlation_threshold: int = 3
 
     s3_endpoint_url: str = "http://localhost:9000"
